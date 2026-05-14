@@ -3,118 +3,140 @@ import AppKit
 
 @main
 struct LyricsOnMacOSBarApp: App {
-    @StateObject var musicMonitor = MusicMonitor()
-    let lyricManager = LyricManager()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            // 当我们开启 .window 模式后，这里就是一个可以完全自由排版的画布了
-            VStack(spacing: 0) {
-                
-                // 1. 顶部留白和歌词源切换
-                Menu("当前歌词源: \(musicMonitor.selectedSource.rawValue)") {
-                    ForEach(LyricSourceConfig.allCases, id: \.self) { source in
-                        Button(action: {
-                            musicMonitor.selectedSource = source
-                            musicMonitor.reFetchLyrics()
-                        }) {
-                            Text(musicMonitor.selectedSource == source ? "✓ \(source.rawValue)" : "   \(source.rawValue)")
-                        }
-                    }
+        Settings {
+            EmptyView()
+        }
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
+    var popover: NSPopover!
+    
+    let monitor = MusicMonitor.shared
+    let lyricManager = LyricManager()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: MenuContentView(musicMonitor: monitor, lyricManager: lyricManager)
+        )
+
+        // 启动时只创建一次状态栏图标
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = false
+        
+        if let btn = statusItem.button {
+            btn.action = #selector(togglePopover(_:))
+            btn.target = self
+            btn.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: nil)
+            btn.imagePosition = .imageLeft
+            // 去除了 wantsLayer，不需要做动画了
+        }
+
+        monitor.onStateChange = { [weak self] isPlaying, lyric in
+            self?.updateMenuBar(isPlaying: isPlaying, lyric: lyric)
+        }
+    }
+
+    func updateMenuBar(isPlaying: Bool, lyric: String) {
+        if isPlaying {
+            if let btn = statusItem.button {
+                // 🔪 已经移除了所有动画，歌词直接赋值，做到零延迟卡点切换！
+                if btn.title != lyric {
+                    btn.title = lyric
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
-                
-                Divider()
-                
-                // 2. 真正的完美横向控制条！
-                HStack(spacing: 40) { // 调整间距让按钮更舒展
-                    Button(action: {
-                        musicMonitor.previousTrack()
-                    }) {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 18))
-                    }
-                    .buttonStyle(.plain) // 去除原生背景
-                    
-                    Button(action: {
-                        musicMonitor.togglePlayPause()
-                    }) {
-                        Image(systemName: musicMonitor.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 24)) // 播放键大一点
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        musicMonitor.nextTrack()
-                    }) {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 18))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.vertical, 16) // 上下留出呼吸感
-                
-                Divider()
-                
-                // 3. 底部功能区 (需要手动用 HStack 撑开宽度，模仿菜单的点击感)
-                VStack(spacing: 4) {
-                    Button(action: {
-                        NSWorkspace.shared.open(lyricManager.localFolderURL)
-                    }) {
-                        HStack {
-                            Text("打开本地歌词文件夹")
-                            Spacer() // 把文字推到左边
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 16)
-                        .contentShape(Rectangle()) // 让整行都可以点击
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        showAboutWindow()
-                    }) {
-                        HStack {
-                            Text("关于 LyricsOnMacOSBar")
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 16)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        NSApplication.shared.terminate(nil)
-                    }) {
-                        HStack {
-                            Text("退出")
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 16)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.vertical, 8)
             }
-            .frame(width: 260) // 固定面板宽度，看起来更像一个标准的小组件
             
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "music.note")
-                Text(musicMonitor.currentLyricLine)
-                    .font(.system(size: 14, weight: .regular, design: .default))
+            // 依然保留底层的显示机制，防止黑块和崩溃
+            if !statusItem.isVisible {
+                statusItem.isVisible = true
+            }
+        } else {
+            if statusItem.isVisible {
+                statusItem.isVisible = false
+            }
+            if popover.isShown {
+                popover.performClose(nil)
             }
         }
-        // ⚠️ 终极魔法：告诉系统不要用死板的下拉列表，用带有毛玻璃效果的独立面板！
-        .menuBarExtraStyle(.window)
+    }
+
+    @objc func togglePopover(_ sender: AnyObject?) {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+}
+
+// === 下方 UI 视图代码保持原样 ===
+struct MenuContentView: View {
+    @ObservedObject var musicMonitor: MusicMonitor
+    let lyricManager: LyricManager
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Menu("当前歌词源: \(musicMonitor.selectedSource.rawValue)") {
+                ForEach(LyricSourceConfig.allCases, id: \.self) { source in
+                    Button(action: {
+                        musicMonitor.selectedSource = source
+                        musicMonitor.reFetchLyrics()
+                    }) {
+                        Text(musicMonitor.selectedSource == source ? "✓ \(source.rawValue)" : "   \(source.rawValue)")
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            
+            Divider()
+            
+            HStack(spacing: 40) {
+                Button(action: { musicMonitor.previousTrack() }) {
+                    Image(systemName: "backward.fill").font(.system(size: 18))
+                }.buttonStyle(.plain)
+                
+                Button(action: { musicMonitor.togglePlayPause() }) {
+                    Image(systemName: musicMonitor.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 24))
+                }.buttonStyle(.plain)
+                
+                Button(action: { musicMonitor.nextTrack() }) {
+                    Image(systemName: "forward.fill").font(.system(size: 18))
+                }.buttonStyle(.plain)
+            }
+            .padding(.vertical, 16)
+            
+            Divider()
+            
+            VStack(spacing: 4) {
+                Button(action: { NSWorkspace.shared.open(lyricManager.localFolderURL) }) {
+                    HStack { Text("打开本地歌词文件夹"); Spacer() }
+                    .padding(.vertical, 6).padding(.horizontal, 16).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                
+                Button(action: { showAboutWindow() }) {
+                    HStack { Text("关于 LyricsOnMacOSBar"); Spacer() }
+                    .padding(.vertical, 6).padding(.horizontal, 16).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                
+                Button(action: { NSApplication.shared.terminate(nil) }) {
+                    HStack { Text("退出"); Spacer() }
+                    .padding(.vertical, 6).padding(.horizontal, 16).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(width: 260)
     }
     
-    // ... 下面的 showAboutWindow() 方法代码保持不变，不要删掉哦！ ...
     private func showAboutWindow() {
         let alert = NSAlert()
         if let appIcon = NSImage(named: "AppIcon") { alert.icon = appIcon }
