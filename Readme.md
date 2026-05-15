@@ -10,7 +10,7 @@
 
 本项目所有代码及 icon 均来自 **Gemini 3.1 Pro**。
 
-本项目编译于 macOS 26.5，Minimum Deployments 版本为 macOS 15.6，仅测试 macOS 26.4 上可正常运行，未测试其他版本。
+本项目编译于 macOS 26.5，Minimum Deployments 版本为 macOS 15.6，仅测试 macOS 26.5 上可正常运行，未测试其他版本。
 
 ## ✨ 核心特性
 
